@@ -1,0 +1,1974 @@
+# Flutter TikTok-Style Video App Project Plan
+
+## 1. Project Overview
+
+This project is a TikTok-style vertical short-video application built with Flutter.
+
+The main objective is to create a smooth full-screen vertical video feed where users can swipe up and down to watch videos fetched from the Pexels API.
+
+The app will focus first on video feed performance, clean architecture, maintainable code structure, and stable video player lifecycle management.
+
+---
+
+## 2. Technology Stack
+
+```txt
+fvm Flutter 3.38.10
+get_it
+flutter_bloc / bloc
+go_router
+media_kit
+media_kit_video
+media_kit_libs_video
+Pexels API
+Dio
+talker_dio_logger
+talker
+freezed
+json_serializable
+build_runner
+Custom Either<L, R>
+Clean Architecture
+```
+
+---
+
+## 3. Package Strategy
+
+### Core Packages
+
+```yaml
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_bloc: latest
+  bloc: latest
+
+  # Dependency injection
+  get_it: latest
+
+  # Routing
+  go_router: latest
+
+  # Networking
+  dio: latest
+
+  # Dio logging
+  talker: latest
+  talker_flutter: latest
+  talker_dio_logger: latest
+
+  # Video player
+  media_kit: latest
+  media_kit_video: latest
+  media_kit_libs_video: latest
+
+  # Code generation annotations
+  freezed_annotation: latest
+  json_annotation: latest
+
+dev_dependencies:
+  build_runner: latest
+  freezed: latest
+  json_serializable: latest
+```
+
+### Removed Package
+
+`equatable` is not required because `freezed` already provides value equality, `copyWith`, immutable classes, and generated `toString`.
+
+---
+
+## 4. Why Use Freezed
+
+Freezed will be used for:
+
+```txt
+1. Bloc events
+2. Bloc states
+3. API models
+4. Domain entities
+5. Immutable value objects
+6. copyWith generation
+7. Equality comparison
+8. Union/sealed classes
+```
+
+Freezed helps reduce boilerplate compared to manually writing `Equatable`, `copyWith`, and state classes.
+
+For JSON serialization, Freezed works together with `json_serializable`.
+
+---
+
+## 5. Why Use talker_dio_logger
+
+The selected Dio logger is:
+
+```txt
+talker_dio_logger
+```
+
+Reason:
+
+```txt
+1. Better for future app-wide logging
+2. Can be extended beyond Dio logs
+3. Works with the Talker ecosystem
+4. Suitable for debugging API requests and responses
+5. Can later support Bloc logs, app logs, and error logs
+6. Better long-term structure compared to simple pretty logging
+```
+
+`pretty_dio_logger` is simple and readable, but `talker_dio_logger` is better for future enhancement.
+
+---
+
+## 6. API Config Strategy
+
+The app will not use `dart-define`.
+
+Instead, API configuration will be written directly inside a config file.
+
+### Config File
+
+```dart
+class AppConfig {
+  static const String pexelsApiKey = 'YOUR_PEXELS_API_KEY';
+
+  static const bool enableNetworkLogs = true;
+}
+```
+
+### API Constants
+
+```dart
+class ApiConstants {
+  static const String baseUrl = 'https://api.pexels.com';
+
+  static const String popularVideos = '/videos/popular';
+  static const String searchVideos = '/videos/search';
+}
+```
+
+### Important Note
+
+Writing the API key directly inside the Flutter app is acceptable for MVP or internal testing.
+
+However, for production, this is not secure because users can still reverse-engineer the app and extract the API key.
+
+For production, the recommended approach is:
+
+```txt
+Flutter App → Your Backend → Pexels API
+```
+
+The backend should hold the real API key.
+
+---
+
+## 7. Recommended Folder Structure
+
+```txt
+lib/
+  main.dart
+
+  app/
+    app.dart
+    router/
+      app_router.dart
+      route_names.dart
+    theme/
+      app_theme.dart
+
+  core/
+    config/
+      app_config.dart
+    di/
+      injection.dart
+    error/
+      failure.dart
+      exception.dart
+    network/
+      api_constants.dart
+      dio_client.dart
+      network_exception.dart
+    result/
+      either.dart
+    usecase/
+      usecase.dart
+    utils/
+      logger.dart
+
+  features/
+    video_feed/
+      data/
+        datasources/
+          video_remote_datasource.dart
+          video_remote_datasource_impl.dart
+        models/
+          pexels_video_response_model.dart
+          pexels_user_model.dart
+          video_file_model.dart
+          video_model.dart
+        repositories/
+          video_repository_impl.dart
+
+      domain/
+        entities/
+          video_entity.dart
+          video_file_entity.dart
+        repositories/
+          video_repository.dart
+        usecases/
+          get_popular_videos_usecase.dart
+          search_videos_usecase.dart
+
+      presentation/
+        bloc/
+          video_feed_bloc.dart
+          video_feed_event.dart
+          video_feed_state.dart
+        pages/
+          video_feed_page.dart
+        widgets/
+          video_feed_view.dart
+          video_player_item.dart
+          video_overlay_actions.dart
+          video_loading_item.dart
+          video_error_item.dart
+          video_player_manager.dart
+```
+
+---
+
+## 8. Clean Architecture Flow
+
+```txt
+Presentation Layer
+  ↓
+Bloc
+  ↓
+Use Case
+  ↓
+Repository Interface
+  ↓
+Repository Implementation
+  ↓
+Remote Data Source
+  ↓
+Dio Client
+  ↓
+Pexels API
+```
+
+### Responsibility by Layer
+
+#### Presentation Layer
+
+Handles:
+
+```txt
+1. UI rendering
+2. PageView
+3. Video widgets
+4. BlocProvider
+5. User actions
+6. Loading/error UI
+```
+
+#### Bloc Layer
+
+Handles:
+
+```txt
+1. Feed loading state
+2. Pagination state
+3. Current video index
+4. Refresh event
+5. Load-more event
+6. Error state
+```
+
+#### Domain Layer
+
+Handles:
+
+```txt
+1. Entities
+2. Repository contracts
+3. Use cases
+4. Business rules
+```
+
+#### Data Layer
+
+Handles:
+
+```txt
+1. API models
+2. JSON parsing
+3. Remote data source
+4. Repository implementation
+5. Model-to-entity mapping
+```
+
+---
+
+## 9. Important Architecture Rule
+
+Do not put heavy video player objects inside Bloc.
+
+Bloc should not own:
+
+```txt
+1. media_kit Player
+2. VideoController
+3. BuildContext
+4. PageController
+5. UI lifecycle objects
+```
+
+Bloc should own:
+
+```txt
+1. Video list
+2. Current index
+3. Loading state
+4. Pagination state
+5. Error message
+```
+
+Video player lifecycle should be handled by:
+
+```txt
+VideoPlayerManager
+```
+
+---
+
+## 10. App Initialization
+
+```dart
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  MediaKit.ensureInitialized();
+
+  await configureDependencies();
+
+  runApp(const MyApp());
+}
+```
+
+---
+
+## 11. Dependency Injection Plan
+
+Use `get_it` for dependency injection.
+
+```dart
+final sl = GetIt.instance;
+
+Future<void> configureDependencies() async {
+  // Core
+  sl.registerLazySingleton<Dio>(() => DioClient.create());
+
+  // Data sources
+  sl.registerLazySingleton<VideoRemoteDataSource>(
+    () => VideoRemoteDataSourceImpl(sl()),
+  );
+
+  // Repositories
+  sl.registerLazySingleton<VideoRepository>(
+    () => VideoRepositoryImpl(sl()),
+  );
+
+  // Use cases
+  sl.registerLazySingleton(
+    () => GetPopularVideosUseCase(sl()),
+  );
+
+  sl.registerLazySingleton(
+    () => SearchVideosUseCase(sl()),
+  );
+
+  // Bloc
+  sl.registerFactory(
+    () => VideoFeedBloc(
+      getPopularVideosUseCase: sl(),
+      searchVideosUseCase: sl(),
+    ),
+  );
+}
+```
+
+### DI Rule
+
+Use:
+
+```txt
+registerLazySingleton
+```
+
+for:
+
+```txt
+1. Dio
+2. Data sources
+3. Repositories
+4. Use cases
+5. Long-lived services
+```
+
+Use:
+
+```txt
+registerFactory
+```
+
+for:
+
+```txt
+1. Bloc
+2. Screen-level controllers
+3. Objects that should be recreated per page
+```
+
+---
+
+## 12. Dio Client Setup
+
+```dart
+class DioClient {
+  static Dio create() {
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: ApiConstants.baseUrl,
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 20),
+        sendTimeout: const Duration(seconds: 15),
+        headers: {
+          'Authorization': AppConfig.pexelsApiKey,
+        },
+      ),
+    );
+
+    if (AppConfig.enableNetworkLogs) {
+      dio.interceptors.add(
+        TalkerDioLogger(
+          settings: const TalkerDioLoggerSettings(
+            printRequestHeaders: true,
+            printResponseHeaders: false,
+            printResponseMessage: true,
+          ),
+        ),
+      );
+    }
+
+    return dio;
+  }
+}
+```
+
+---
+
+## 13. Either<L, R> Class
+
+```dart
+sealed class Either<L, R> {
+  const Either();
+
+  T fold<T>(
+    T Function(L left) onLeft,
+    T Function(R right) onRight,
+  );
+
+  bool get isLeft;
+  bool get isRight;
+}
+
+final class Left<L, R> extends Either<L, R> {
+  final L value;
+
+  const Left(this.value);
+
+  @override
+  T fold<T>(
+    T Function(L left) onLeft,
+    T Function(R right) onRight,
+  ) {
+    return onLeft(value);
+  }
+
+  @override
+  bool get isLeft => true;
+
+  @override
+  bool get isRight => false;
+}
+
+final class Right<L, R> extends Either<L, R> {
+  final R value;
+
+  const Right(this.value);
+
+  @override
+  T fold<T>(
+    T Function(L left) onLeft,
+    T Function(R right) onRight,
+  ) {
+    return onRight(value);
+  }
+
+  @override
+  bool get isLeft => false;
+
+  @override
+  bool get isRight => true;
+}
+```
+
+---
+
+## 14. Failure Class
+
+```dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'failure.freezed.dart';
+
+@freezed
+sealed class Failure with _$Failure {
+  const factory Failure.server({
+    required String message,
+  }) = ServerFailure;
+
+  const factory Failure.network({
+    required String message,
+  }) = NetworkFailure;
+
+  const factory Failure.unknown({
+    required String message,
+  }) = UnknownFailure;
+}
+```
+
+---
+
+## 15. Video Entity
+
+```dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'video_entity.freezed.dart';
+
+@freezed
+abstract class VideoEntity with _$VideoEntity {
+  const factory VideoEntity({
+    required int id,
+    required String title,
+    required String thumbnailUrl,
+    required String videoUrl,
+    required String authorName,
+    required int duration,
+    required int width,
+    required int height,
+  }) = _VideoEntity;
+}
+```
+
+---
+
+## 16. Pexels Video Model
+
+```dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'video_model.freezed.dart';
+part 'video_model.g.dart';
+
+@freezed
+abstract class VideoModel with _$VideoModel {
+  const factory VideoModel({
+    required int id,
+    required int width,
+    required int height,
+    required int duration,
+    required String image,
+    required PexelsUserModel user,
+    @JsonKey(name: 'video_files') required List<VideoFileModel> videoFiles,
+  }) = _VideoModel;
+
+  factory VideoModel.fromJson(Map<String, dynamic> json) =>
+      _$VideoModelFromJson(json);
+}
+```
+
+---
+
+## 17. Video File Model
+
+```dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'video_file_model.freezed.dart';
+part 'video_file_model.g.dart';
+
+@freezed
+abstract class VideoFileModel with _$VideoFileModel {
+  const factory VideoFileModel({
+    required int id,
+    required String quality,
+    @JsonKey(name: 'file_type') required String fileType,
+    required int width,
+    required int height,
+    required String link,
+  }) = _VideoFileModel;
+
+  factory VideoFileModel.fromJson(Map<String, dynamic> json) =>
+      _$VideoFileModelFromJson(json);
+}
+```
+
+---
+
+## 18. Pexels Response Model
+
+```dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'pexels_video_response_model.freezed.dart';
+part 'pexels_video_response_model.g.dart';
+
+@freezed
+abstract class PexelsVideoResponseModel with _$PexelsVideoResponseModel {
+  const factory PexelsVideoResponseModel({
+    required int page,
+    @JsonKey(name: 'per_page') required int perPage,
+    required List<VideoModel> videos,
+    @JsonKey(name: 'total_results') required int totalResults,
+    @JsonKey(name: 'next_page') String? nextPage,
+  }) = _PexelsVideoResponseModel;
+
+  factory PexelsVideoResponseModel.fromJson(Map<String, dynamic> json) =>
+      _$PexelsVideoResponseModelFromJson(json);
+}
+```
+
+---
+
+## 19. Build Runner Command
+
+```bash
+fvm dart run build_runner build --force-jit --delete-conflicting-outputs
+```
+
+or:
+
+```bash
+fvm flutter pub run build_runner build --force-jit --delete-conflicting-outputs
+```
+
+For continuous generation during development:
+
+```bash
+fvm dart run build_runner watch --force-jit --delete-conflicting-outputs
+```
+
+---
+
+## 20. Repository Contract
+
+```dart
+abstract class VideoRepository {
+  Future<Either<Failure, List<VideoEntity>>> getPopularVideos({
+    required int page,
+    required int perPage,
+  });
+
+  Future<Either<Failure, List<VideoEntity>>> searchVideos({
+    required String query,
+    required int page,
+    required int perPage,
+  });
+}
+```
+
+---
+
+## 21. Use Case Example
+
+```dart
+class GetPopularVideosUseCase {
+  final VideoRepository repository;
+
+  GetPopularVideosUseCase(this.repository);
+
+  Future<Either<Failure, List<VideoEntity>>> call({
+    required int page,
+    required int perPage,
+  }) {
+    return repository.getPopularVideos(
+      page: page,
+      perPage: perPage,
+    );
+  }
+}
+```
+
+---
+
+## 22. Bloc Event With Freezed
+
+```dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'video_feed_event.freezed.dart';
+
+@freezed
+sealed class VideoFeedEvent with _$VideoFeedEvent {
+  const factory VideoFeedEvent.started() = VideoFeedStarted;
+
+  const factory VideoFeedEvent.loadMoreRequested() =
+      VideoFeedLoadMoreRequested;
+
+  const factory VideoFeedEvent.pageChanged({
+    required int index,
+  }) = VideoFeedPageChanged;
+
+  const factory VideoFeedEvent.refreshRequested() =
+      VideoFeedRefreshRequested;
+}
+```
+
+---
+
+## 23. Bloc State With Freezed
+
+```dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'video_feed_state.freezed.dart';
+
+@freezed
+abstract class VideoFeedState with _$VideoFeedState {
+  const factory VideoFeedState({
+    @Default([]) List<VideoEntity> videos,
+    @Default(0) int currentIndex,
+    @Default(1) int page,
+    @Default(false) bool isInitialLoading,
+    @Default(false) bool isLoadingMore,
+    @Default(false) bool hasReachedEnd,
+    String? errorMessage,
+  }) = _VideoFeedState;
+}
+```
+
+---
+
+## 24. Video Feed Bloc Responsibility
+
+The Bloc should handle:
+
+```txt
+1. Initial video loading
+2. Refresh
+3. Pagination
+4. Current index update
+5. Error state
+6. Loading state
+```
+
+The Bloc should not handle:
+
+```txt
+1. Player creation
+2. Player disposal
+3. Player pause/play directly
+4. Video rendering
+```
+
+---
+
+## 25. Video Feed UI
+
+Use a vertical `PageView.builder`.
+
+```dart
+PageView.builder(
+  scrollDirection: Axis.vertical,
+  itemCount: state.videos.length,
+  onPageChanged: (index) {
+    context.read<VideoFeedBloc>().add(
+      VideoFeedEvent.pageChanged(index: index),
+    );
+  },
+  itemBuilder: (context, index) {
+    final video = state.videos[index];
+
+    return VideoPlayerItem(
+      video: video,
+      isActive: index == state.currentIndex,
+      manager: videoPlayerManager,
+    );
+  },
+)
+```
+
+---
+
+## 26. Video Player Strategy
+
+The biggest technical risk is video memory management.
+
+The app should not create a video player for every item.
+
+Recommended active window:
+
+```txt
+1. Previous video
+2. Current video
+3. Next video
+```
+
+Maximum active players for MVP:
+
+```txt
+3
+```
+
+When current index is `i`, keep:
+
+```txt
+i - 1
+i
+i + 1
+```
+
+Dispose everything else.
+
+---
+
+## 27. Video Player Manager
+
+```dart
+class VideoPlayerManager {
+  final Map<int, Player> _players = {};
+  final Map<int, VideoController> _controllers = {};
+
+  Player? getPlayer(int videoId) => _players[videoId];
+
+  VideoController? getController(int videoId) => _controllers[videoId];
+
+  Future<void> prepare(VideoEntity video) async {
+    if (_players.containsKey(video.id)) return;
+
+    final player = Player();
+    final controller = VideoController(player);
+
+    _players[video.id] = player;
+    _controllers[video.id] = controller;
+
+    await player.open(
+      Media(video.videoUrl),
+      play: false,
+    );
+  }
+
+  Future<void> play(int videoId) async {
+    final player = _players[videoId];
+    if (player == null) return;
+
+    await player.play();
+  }
+
+  Future<void> pause(int videoId) async {
+    final player = _players[videoId];
+    if (player == null) return;
+
+    await player.pause();
+  }
+
+  Future<void> disposeVideo(int videoId) async {
+    final player = _players.remove(videoId);
+    _controllers.remove(videoId);
+
+    await player?.dispose();
+  }
+
+  Future<void> disposeExcept(Set<int> keepIds) async {
+    final idsToDispose = _players.keys
+        .where((id) => !keepIds.contains(id))
+        .toList();
+
+    for (final id in idsToDispose) {
+      await disposeVideo(id);
+    }
+  }
+
+  Future<void> disposeAll() async {
+    for (final player in _players.values) {
+      await player.dispose();
+    }
+
+    _players.clear();
+    _controllers.clear();
+  }
+}
+```
+
+---
+
+## 28. Recommended Manager Lifecycle
+
+For MVP, `VideoFeedPage` should own `VideoPlayerManager`.
+
+```txt
+VideoFeedPage
+  └── VideoPlayerManager
+```
+
+Reason:
+
+```txt
+1. Easier lifecycle control
+2. Dispose all players when feed page closes
+3. Avoid global player memory leaks
+4. Safer than singleton manager for MVP
+```
+
+Later, this can become a scoped service if needed.
+
+---
+
+## 29. Preloading Logic
+
+When the current page changes:
+
+```txt
+1. Prepare current video
+2. Prepare previous video
+3. Prepare next video
+4. Play current video
+5. Pause previous and next videos
+6. Dispose videos outside the active window
+```
+
+Pseudo logic:
+
+```dart
+Future<void> handlePageChanged({
+  required int index,
+  required List<VideoEntity> videos,
+}) async {
+  final current = videos[index];
+
+  final previous = index > 0 ? videos[index - 1] : null;
+  final next = index < videos.length - 1 ? videos[index + 1] : null;
+
+  await manager.prepare(current);
+
+  if (previous != null) {
+    await manager.prepare(previous);
+    await manager.pause(previous.id);
+  }
+
+  if (next != null) {
+    await manager.prepare(next);
+    await manager.pause(next.id);
+  }
+
+  await manager.play(current.id);
+
+  final keepIds = {
+    current.id,
+    if (previous != null) previous.id,
+    if (next != null) next.id,
+  };
+
+  await manager.disposeExcept(keepIds);
+}
+```
+
+---
+
+## 30. Video Quality Selection
+
+Do not always choose the highest-quality Pexels video.
+
+For mobile feed playback, choose a balanced source.
+
+Recommended target:
+
+```txt
+720p or medium quality MP4
+```
+
+Avoid:
+
+```txt
+1. 4K videos
+2. Very large files
+3. Extremely low-quality files
+```
+
+Selection example:
+
+```dart
+VideoFileModel selectBestVideoFile(List<VideoFileModel> files) {
+  final mp4Files = files.where((f) => f.fileType == 'video/mp4').toList();
+
+  mp4Files.sort((a, b) {
+    final aScore = (a.height - 720).abs();
+    final bScore = (b.height - 720).abs();
+
+    return aScore.compareTo(bScore);
+  });
+
+  return mp4Files.first;
+}
+```
+
+---
+
+## 31. Pagination Strategy
+
+Recommended MVP pagination:
+
+```txt
+per_page = 8 to 10
+```
+
+Load more when:
+
+```txt
+currentIndex >= videos.length - 3
+```
+
+Reason:
+
+```txt
+1. Prevent loading too many large videos
+2. Reduce memory pressure
+3. Keep first API response fast
+4. Give enough buffer for smooth scrolling
+```
+
+---
+
+## 32. go_router Setup
+
+```dart
+final appRouter = GoRouter(
+  initialLocation: '/feed',
+  routes: [
+    GoRoute(
+      path: '/feed',
+      name: RouteNames.feed,
+      builder: (context, state) {
+        return BlocProvider(
+          create: (_) => sl<VideoFeedBloc>()
+            ..add(const VideoFeedEvent.started()),
+          child: const VideoFeedPage(),
+        );
+      },
+    ),
+  ],
+);
+```
+
+Route names:
+
+```dart
+class RouteNames {
+  static const String feed = 'feed';
+}
+```
+
+---
+
+## 33. UI Layout Plan
+
+Use a `Stack` for each video item.
+
+```txt
+Stack
+  ├── Full-screen Video
+  ├── Bottom gradient overlay
+  ├── Right action buttons
+  │   ├── Like
+  │   ├── Comment
+  │   ├── Save
+  │   └── Share
+  ├── Bottom video info
+  │   ├── Username
+  │   ├── Caption
+  │   └── Music/source
+  └── Top safe area
+      ├── Following
+      └── For You
+```
+
+---
+
+## 34. App Lifecycle Handling
+
+The app must pause video when it goes to the background.
+
+Use:
+
+```dart
+WidgetsBindingObserver
+```
+
+Rules:
+
+```txt
+App paused:
+  Pause current video
+
+App inactive:
+  Pause current video
+
+App resumed:
+  Resume current video if feed page is active
+```
+
+---
+
+## 35. Error Handling Plan
+
+Handle:
+
+```txt
+1. No internet
+2. Pexels API error
+3. API rate limit
+4. Empty result
+5. Video cannot play
+6. Timeout
+7. Fast scrolling causing preparation race
+8. App background/resume
+```
+
+UI states:
+
+```txt
+Initial loading:
+  Full-screen loading
+
+Initial error:
+  Retry button
+
+Load-more error:
+  Small non-blocking message
+
+Video playback error:
+  Thumbnail + retry button
+```
+
+---
+
+## 36. MVP Scope
+
+The MVP should include:
+
+```txt
+1. Feed page
+2. Fetch Pexels videos
+3. Vertical PageView
+4. Current video auto-play
+5. Previous video pause
+6. Next video preload
+7. Dispose old players
+8. Pagination
+9. Loading and error UI
+10. Basic overlay UI
+11. Tap to pause/play
+12. Mute/unmute
+```
+
+Do not include in MVP:
+
+```txt
+1. Login
+2. Upload video
+3. Real comments
+4. Real likes
+5. Follow system
+6. Recommendation algorithm
+7. Backend
+8. Notifications
+9. Chat
+```
+
+---
+
+## 37. Development Milestones
+
+### Phase 1 — Project Setup
+
+Deliverables:
+
+```txt
+1. Flutter project created
+2. Dependencies installed
+3. Folder structure created
+4. AppConfig created
+5. ApiConstants created
+6. get_it configured
+7. go_router configured
+8. media_kit initialized
+```
+
+---
+
+### Phase 2 — Core Utilities
+
+Deliverables:
+
+```txt
+1. Either<L, R>
+2. Failure
+3. UseCase base class
+4. DioClient
+5. Talker Dio logger
+6. Network exception mapping
+```
+
+---
+
+### Phase 3 — Pexels API Integration
+
+Deliverables:
+
+```txt
+1. Video response model
+2. Video model
+3. Video file model
+4. Pexels user model
+5. Remote data source
+6. Repository implementation
+7. Model-to-entity mapper
+```
+
+---
+
+### Phase 4 — Domain Layer
+
+Deliverables:
+
+```txt
+1. VideoEntity
+2. VideoRepository contract
+3. GetPopularVideosUseCase
+4. SearchVideosUseCase
+```
+
+---
+
+### Phase 5 — Bloc Layer
+
+Deliverables:
+
+```txt
+1. VideoFeedEvent
+2. VideoFeedState
+3. VideoFeedBloc
+4. Initial load
+5. Pagination
+6. Refresh
+7. Page changed event
+```
+
+---
+
+### Phase 6 — Basic UI
+
+Deliverables:
+
+```txt
+1. VideoFeedPage
+2. VideoFeedView
+3. Vertical PageView
+4. Loading UI
+5. Error UI
+6. Empty UI
+```
+
+---
+
+### Phase 7 — media_kit Integration
+
+Deliverables:
+
+```txt
+1. VideoPlayerManager
+2. VideoPlayerItem
+3. Current video playback
+4. Previous video pause
+5. Next video preload
+6. Dispose outside active window
+```
+
+---
+
+### Phase 8 — UI Polish
+
+Deliverables:
+
+```txt
+1. Right-side action buttons
+2. Username and caption
+3. Bottom gradient
+4. Tap to pause/play
+5. Mute/unmute button
+6. Loading indicator for each video
+7. Retry for failed video
+```
+
+---
+
+### Phase 9 — Performance Testing
+
+Deliverables:
+
+```txt
+1. Fast swipe test
+2. Long session test
+3. Memory usage observation
+4. API pagination test
+5. Background/resume test
+6. Bad network test
+7. Release build test
+```
+
+---
+
+## 38. Suggested MVP Timeline
+
+For one developer:
+
+```txt
+Day 1:
+  Project setup, packages, folder structure, config, DI, router
+
+Day 2:
+  Either, Failure, Dio, Talker logger, Pexels API models
+
+Day 3:
+  Data source, repository, use cases, Bloc
+
+Day 4:
+  Basic feed UI with PageView
+
+Day 5:
+  media_kit player integration
+
+Day 6:
+  Preload/dispose strategy and lifecycle handling
+
+Day 7:
+  UI polish and testing
+```
+
+Realistic MVP duration:
+
+```txt
+5 to 10 working days
+```
+
+---
+
+## 39. Performance Rules
+
+Follow these rules strictly:
+
+```txt
+1. Do not create one Player for every PageView item.
+2. Do not keep all old players alive.
+3. Do not preload too many videos.
+4. Do not use 4K video URLs by default.
+5. Do not fetch API data inside video item widgets.
+6. Do not put Player inside Bloc.
+7. Do not call setState heavily during playback.
+8. Dispose players outside current window.
+9. Keep per_page small.
+10. Test fast scrolling early.
+```
+
+Recommended active player count:
+
+```txt
+MVP: 3 players
+Advanced: 5 players only after memory testing
+```
+
+---
+
+# Future Enhancement Plan
+
+## 1. Backend Proxy
+
+Instead of calling Pexels API directly from Flutter:
+
+```txt
+Flutter App → Backend API → Pexels API
+```
+
+Benefits:
+
+```txt
+1. Hide Pexels API key
+2. Add caching
+3. Add rate-limit protection
+4. Add custom recommendation logic
+5. Control video response format
+6. Easier analytics tracking
+```
+
+---
+
+## 2. Video Caching
+
+Add video caching to reduce repeated network loading.
+
+Possible strategies:
+
+```txt
+1. Cache only current/next video
+2. Cache short clips temporarily
+3. Clear old cache automatically
+4. Limit cache size
+5. Avoid caching too many large videos
+```
+
+Important:
+
+```txt
+Do not store many full videos without cache limit.
+```
+
+---
+
+## 3. Better Recommendation System
+
+Start simple:
+
+```txt
+1. Popular videos
+2. Search-based videos
+3. Category-based videos
+```
+
+Later:
+
+```txt
+1. Watch duration
+2. Skip behavior
+3. Likes
+4. Saves
+5. Shares
+6. User interests
+7. Similar video ranking
+```
+
+---
+
+## 4. User Authentication
+
+Future login options:
+
+```txt
+1. Email/password
+2. Google login
+3. Apple login
+4. Phone login
+```
+
+Authentication enables:
+
+```txt
+1. Likes
+2. Comments
+3. Saves
+4. Watch history
+5. Personalized feed
+6. User profile
+```
+
+---
+
+## 5. Likes, Comments, and Saves
+
+Future social features:
+
+```txt
+1. Like video
+2. Unlike video
+3. Save video
+4. Comment
+5. Reply to comment
+6. Share video
+7. Report video
+```
+
+Recommended approach:
+
+```txt
+Use optimistic UI updates.
+```
+
+Example:
+
+```txt
+User taps like
+  ↓
+UI updates immediately
+  ↓
+API request runs
+  ↓
+If failed, rollback or queue retry
+```
+
+---
+
+## 6. Upload Video Feature
+
+Future upload flow:
+
+```txt
+1. Pick video
+2. Compress video
+3. Generate thumbnail
+4. Upload to storage
+5. Save metadata to backend
+6. Process video
+7. Publish video
+```
+
+Recommended backend storage:
+
+```txt
+1. S3-compatible storage
+2. Cloudflare R2
+3. Supabase Storage
+4. Firebase Storage
+```
+
+---
+
+## 7. Video Compression
+
+Before upload:
+
+```txt
+1. Compress video
+2. Limit resolution
+3. Limit duration
+4. Generate thumbnail
+5. Validate file size
+```
+
+Recommended constraints:
+
+```txt
+Max duration:
+  15 to 60 seconds
+
+Max upload size:
+  Depends on backend budget
+
+Target resolution:
+  720p or 1080p
+```
+
+---
+
+## 8. CDN Integration
+
+Use a CDN for video delivery.
+
+Benefits:
+
+```txt
+1. Faster loading
+2. Lower backend pressure
+3. Better global delivery
+4. Reduced buffering
+5. Better scalability
+```
+
+Possible options:
+
+```txt
+1. Cloudflare
+2. AWS CloudFront
+3. Bunny CDN
+4. Google Cloud CDN
+```
+
+---
+
+## 9. Analytics
+
+Track:
+
+```txt
+1. Video impressions
+2. Watch duration
+3. Completion rate
+4. Swipe-away rate
+5. Like rate
+6. Share rate
+7. Search behavior
+8. App crash rate
+9. API failure rate
+```
+
+Analytics helps improve:
+
+```txt
+1. Feed ranking
+2. Content quality
+3. App performance
+4. User retention
+```
+
+---
+
+## 10. Offline and Retry Queue
+
+For actions like likes and saves:
+
+```txt
+1. Save action locally
+2. Update UI immediately
+3. Retry API later
+4. Sync when internet returns
+```
+
+This improves UX when the network is unstable.
+
+---
+
+## 11. Advanced Video Preloading
+
+Current MVP:
+
+```txt
+Previous + current + next
+```
+
+Future improvement:
+
+```txt
+1. Preload based on scroll direction
+2. Preload next 2 only when user is swiping down
+3. Reduce preload on low-memory devices
+4. Disable preload on poor network
+5. Adapt video quality based on network speed
+```
+
+---
+
+## 12. Adaptive Video Quality
+
+Future logic:
+
+```txt
+Fast Wi-Fi:
+  Use 1080p
+
+Normal network:
+  Use 720p
+
+Slow network:
+  Use 480p
+
+Low memory:
+  Use lower quality
+```
+
+This can reduce buffering and crashes.
+
+---
+
+## 13. App Lifecycle Enhancement
+
+Future lifecycle support:
+
+```txt
+1. Pause when app goes background
+2. Resume only when feed is visible
+3. Pause when user opens comment sheet
+4. Pause when route changes
+5. Pause during phone call/interruption
+6. Handle audio focus
+```
+
+---
+
+## 14. Search Feature
+
+Add search page:
+
+```txt
+1. Search videos by keyword
+2. Show result feed
+3. Save recent searches
+4. Trending keywords
+5. Category filter
+```
+
+Pexels search can be used first.
+
+Later, search should move to your backend.
+
+---
+
+## 15. Category Feed
+
+Add categories:
+
+```txt
+1. Nature
+2. Travel
+3. Food
+4. Fashion
+5. Fitness
+6. Education
+7. Tech
+8. Entertainment
+```
+
+Each category can map to a Pexels search query in MVP.
+
+---
+
+## 16. Profile Page
+
+Future profile features:
+
+```txt
+1. User avatar
+2. Username
+3. Bio
+4. Uploaded videos
+5. Liked videos
+6. Saved videos
+7. Followers
+8. Following
+```
+
+---
+
+## 17. Comment Bottom Sheet
+
+Future UI:
+
+```txt
+1. Open comments as bottom sheet
+2. Pause or reduce video volume
+3. Display comments
+4. Add comment
+5. Like comment
+6. Reply to comment
+```
+
+---
+
+## 18. Share Feature
+
+Future sharing:
+
+```txt
+1. Native share sheet
+2. Copy video link
+3. Share to WhatsApp
+4. Share to Instagram
+5. Deep link back to video
+```
+
+---
+
+## 19. Deep Linking
+
+Future deep link format:
+
+```txt
+app://video/{videoId}
+```
+
+or web link:
+
+```txt
+https://yourdomain.com/video/{videoId}
+```
+
+Benefits:
+
+```txt
+1. Share individual videos
+2. Open app directly to video
+3. Marketing campaigns
+4. Better user acquisition
+```
+
+---
+
+## 20. Push Notifications
+
+Future notifications:
+
+```txt
+1. New follower
+2. New comment
+3. Video liked
+4. Trending video
+5. Personalized recommendation
+```
+
+---
+
+## 21. Moderation
+
+If the app allows uploads, moderation becomes important.
+
+Moderation needs:
+
+```txt
+1. Report video
+2. Block user
+3. Hide content
+4. Admin review
+5. NSFW detection
+6. Copyright policy
+```
+
+---
+
+## 22. Admin Dashboard
+
+Future admin dashboard:
+
+```txt
+1. Manage users
+2. Manage videos
+3. Review reports
+4. View analytics
+5. Feature selected videos
+6. Ban users
+```
+
+---
+
+## 23. Crash and Error Monitoring
+
+Future tools:
+
+```txt
+1. Firebase Crashlytics
+2. Sentry
+3. Talker logs
+4. Custom backend logs
+```
+
+Track:
+
+```txt
+1. Player crash
+2. API error
+3. Memory issue
+4. Device-specific issues
+5. Slow startup
+```
+
+---
+
+## 24. Testing Plan
+
+Future test coverage:
+
+```txt
+1. Unit tests for use cases
+2. Unit tests for repositories
+3. Unit tests for Either
+4. Unit tests for Failure mapping
+5. Bloc tests
+6. Widget tests for feed UI
+7. Integration tests for scrolling
+8. Performance tests for memory
+```
+
+---
+
+## 25. Production Deployment Checklist
+
+Before production:
+
+```txt
+1. Remove hardcoded API key
+2. Move API key to backend
+3. Disable verbose network logs
+4. Add crash monitoring
+5. Test release build
+6. Test low-end Android devices
+7. Test iOS devices
+8. Test poor network
+9. Test fast swiping
+10. Test memory usage
+11. Add privacy policy
+12. Add terms of service
+13. Review Pexels API usage rules
+```
+
+---
+
+## 26. Final Architecture Recommendation
+
+The final MVP architecture should be:
+
+```txt
+Flutter UI
+  ↓
+Bloc
+  ↓
+Use Case
+  ↓
+Repository
+  ↓
+Remote Data Source
+  ↓
+Dio
+  ↓
+Pexels API
+```
+
+Video lifecycle should be separate:
+
+```txt
+VideoFeedPage
+  ↓
+VideoPlayerManager
+  ↓
+media_kit Player
+```
+
+This separation keeps the app maintainable, testable, and safer against video memory crashes.
+
+---
+
+## 27. Final MVP Priority
+
+The most important MVP goal is not to build all TikTok features.
+
+The most important MVP goal is:
+
+```txt
+Prove that Flutter + media_kit can deliver a smooth vertical video feed with safe memory usage.
+```
+
+After that is stable, social features and backend features can be added progressively.
