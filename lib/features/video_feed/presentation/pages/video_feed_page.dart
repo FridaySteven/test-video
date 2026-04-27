@@ -151,20 +151,15 @@ class _VideoFeedPageState extends State<VideoFeedPage>
         listener: (context, state) {
           _activeIndexNotifier.value = state.currentIndex;
           final isReplacementFeed = state.page == 1 && state.currentIndex == 0;
-          if (isReplacementFeed && _pageController.hasClients) {
-            final currentPage = _pageController.page ?? 0;
-            if (currentPage.round() != 0) {
-              _pageController.jumpToPage(0);
-            }
-          }
 
           final forcePlay = !_hasStartedInitialVideo || isReplacementFeed;
           _hasStartedInitialVideo = true;
           if (forcePlay) {
-            _requestVideoSync(
+            _requestVideoSyncAfterLayout(
               state.currentIndex,
               state.videos,
               forcePlay: true,
+              resetToFirstPage: isReplacementFeed,
             );
           } else {
             _requestPreloadWindowForIndex(state.currentIndex, state.videos);
@@ -285,6 +280,40 @@ class _VideoFeedPageState extends State<VideoFeedPage>
     }
 
     return false;
+  }
+
+  /// Starts playback after the page view has been laid out. This keeps initial
+  /// release startup from racing media preparation against the first video view.
+  void _requestVideoSyncAfterLayout(
+    int index,
+    List<VideoEntity> videos, {
+    required bool forcePlay,
+    required bool resetToFirstPage,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || videos.isEmpty) return;
+
+      var targetIndex = index;
+      if (resetToFirstPage && _pageController.hasClients) {
+        final currentPage = _pageController.page ?? 0;
+        if (currentPage.round() != 0) {
+          _pageController.jumpToPage(0);
+        }
+        targetIndex = 0;
+      }
+
+      if (targetIndex < 0 || targetIndex >= videos.length) return;
+      if (_activeIndexNotifier.value != targetIndex) {
+        _activeIndexNotifier.value = targetIndex;
+      }
+
+      _requestVideoSync(
+        targetIndex,
+        videos,
+        forcePlay: forcePlay,
+        delay: Duration.zero,
+      );
+    });
   }
 
   /// Runs the most recent deferred media action once the page settles.
