@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:get_it/get_it.dart';
+import '../cache/video_cache_service.dart';
 import '../network/dio_client.dart';
 import '../../features/video_feed/data/datasources/video_remote_datasource.dart';
 import '../../features/video_feed/data/datasources/video_remote_datasource_impl.dart';
@@ -14,6 +15,7 @@ final sl = GetIt.instance;
 Future<void> configureDependencies() async {
   // Core
   sl.registerLazySingleton<Dio>(() => DioClient.create());
+  sl.registerLazySingleton<VideoCacheService>(() => VideoCacheService(sl()));
 
   // Data sources
   sl.registerLazySingleton<VideoRemoteDataSource>(

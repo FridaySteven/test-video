@@ -1,26 +1,41 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import '../../../../core/cache/video_cache_service.dart';
 import '../../../../core/utils/logger.dart';
 import '../../domain/entities/video_entity.dart';
 
 class VideoPlayerManager extends ChangeNotifier {
+  VideoPlayerManager({required VideoCacheService videoCacheService})
+    : _videoCacheService = videoCacheService;
+
+  final VideoCacheService _videoCacheService;
   final Map<int, Player> _players = {};
   final Map<int, VideoController> _controllers = {};
   final Map<int, Future<void>> _preparing = {};
   final Map<int, String> _errors = {};
   final Set<int> _readyVideoIds = {};
+  final Set<int> _firstFrameRenderedVideoIds = {};
   final Set<int> _disposingVideoIds = {};
   int? _activeVideoId;
   bool _isUserPaused = false;
   bool _isDisposed = false;
   int _playRequestId = 0;
+  static const bool _logVideoLifecycle = false;
 
   Player? getPlayer(int videoId) => _players[videoId];
 
   VideoController? getController(int videoId) => _controllers[videoId];
 
   bool isReady(int videoId) => _readyVideoIds.contains(videoId);
+
+  bool isPlaying(int videoId) => _players[videoId]?.state.playing ?? false;
+
+  bool hasFirstFrameRendered(int videoId) {
+    return _firstFrameRenderedVideoIds.contains(videoId);
+  }
 
   String? getError(int videoId) => _errors[videoId];
 
@@ -32,6 +47,21 @@ class VideoPlayerManager extends ChangeNotifier {
 
   bool shouldShowPauseOverlay(int videoId) {
     return _activeVideoId == videoId && _isUserPaused;
+  }
+
+  void cacheVideos(
+    Iterable<VideoEntity> videos, {
+    Iterable<int> priorityIds = const [],
+  }) {
+    _videoCacheService.prefetchWindow(videos, priorityIds: priorityIds);
+  }
+
+  void cancelCachedVideoDownloadsExcept(Set<int> keepIds) {
+    _videoCacheService.cancelExcept(keepIds);
+  }
+
+  void cancelAllCachedVideoDownloads() {
+    _videoCacheService.cancelAll();
   }
 
   Future<void> prepare(VideoEntity video) async {
@@ -49,6 +79,7 @@ class VideoPlayerManager extends ChangeNotifier {
     _players[video.id] = player;
     _controllers[video.id] = controller;
     _errors.remove(video.id);
+    _firstFrameRenderedVideoIds.remove(video.id);
 
     final prepareFuture = _preparePlayer(video, player);
     _preparing[video.id] = prepareFuture;
@@ -65,6 +96,7 @@ class VideoPlayerManager extends ChangeNotifier {
         _controllers.remove(video.id);
       }
       _readyVideoIds.remove(video.id);
+      _firstFrameRenderedVideoIds.remove(video.id);
       _errors[video.id] = 'Video failed to load';
       await player.dispose();
       _emitChanged();
@@ -76,11 +108,12 @@ class VideoPlayerManager extends ChangeNotifier {
 
   Future<void> _preparePlayer(VideoEntity video, Player player) async {
     final stopwatch = Stopwatch()..start();
-    await player.open(Media(video.videoUrl), play: false);
+    final source = await _videoCacheService.sourceFor(video);
+    await player.open(Media(source), play: false);
     await player.setVolume(100.0);
     await player.setPlaylistMode(PlaylistMode.loop);
     stopwatch.stop();
-    if (kDebugMode) {
+    if (kDebugMode && _logVideoLifecycle) {
       talker.info(
         'Prepared video ${video.id} in ${stopwatch.elapsedMilliseconds}ms '
         '(${video.width}x${video.height}, ${video.duration}s)',
@@ -96,8 +129,14 @@ class VideoPlayerManager extends ChangeNotifier {
     _activeVideoId = videoId;
     _isUserPaused = false;
     await player.play();
-    if (kDebugMode) talker.info('Playing video $videoId');
+    if (kDebugMode && _logVideoLifecycle) talker.info('Playing video $videoId');
     _emitChanged();
+  }
+
+  void markFirstFrameRendered(int videoId) {
+    if (_firstFrameRenderedVideoIds.add(videoId)) {
+      _emitChanged();
+    }
   }
 
   Future<void> playOnly(int videoId, {bool force = false}) async {
@@ -125,7 +164,9 @@ class VideoPlayerManager extends ChangeNotifier {
     _activeVideoId = videoId;
     _isUserPaused = false;
     await player.play();
-    if (kDebugMode) talker.info('Playing only video $videoId');
+    if (kDebugMode && _logVideoLifecycle) {
+      talker.info('Playing only video $videoId');
+    }
     _emitChanged();
   }
 
@@ -183,6 +224,7 @@ class VideoPlayerManager extends ChangeNotifier {
     final player = _players.remove(videoId);
     _controllers.remove(videoId);
     _readyVideoIds.remove(videoId);
+    _firstFrameRenderedVideoIds.remove(videoId);
     _errors.remove(videoId);
     if (_activeVideoId == videoId) {
       _activeVideoId = null;
@@ -203,6 +245,43 @@ class VideoPlayerManager extends ChangeNotifier {
     }
   }
 
+  Future<void> retainOnly({
+    required Set<int> keepIds,
+    required List<int> priorityIds,
+    required int maxPlayers,
+  }) async {
+    await disposeExcept(keepIds);
+    await trimToMax(
+      keepIds: keepIds,
+      priorityIds: priorityIds,
+      maxPlayers: maxPlayers,
+    );
+  }
+
+  Future<void> trimToMax({
+    required Set<int> keepIds,
+    required List<int> priorityIds,
+    required int maxPlayers,
+  }) async {
+    if (_players.length <= maxPlayers) return;
+
+    final priority = <int, int>{
+      for (var i = 0; i < priorityIds.length; i++) priorityIds[i]: i,
+    };
+    final overflowIds =
+        _players.keys.where((id) => !keepIds.contains(id)).toList()
+          ..sort((a, b) {
+            final aPriority = priority[a] ?? 1 << 20;
+            final bPriority = priority[b] ?? 1 << 20;
+            return bPriority.compareTo(aPriority);
+          });
+
+    for (final id in overflowIds) {
+      if (_players.length <= maxPlayers) break;
+      await disposeVideo(id);
+    }
+  }
+
   Future<void> disposeAll() async {
     _disposingVideoIds.addAll(_players.keys);
     await Future.wait(
@@ -218,6 +297,7 @@ class VideoPlayerManager extends ChangeNotifier {
     _players.clear();
     _controllers.clear();
     _readyVideoIds.clear();
+    _firstFrameRenderedVideoIds.clear();
     _disposingVideoIds.clear();
     _preparing.clear();
     _activeVideoId = null;

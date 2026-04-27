@@ -1,14 +1,14 @@
 import 'package:flutter/widgets.dart';
 
-class TikTokPageScrollPhysics extends ScrollPhysics {
+class TikTokPageScrollPhysics extends PageScrollPhysics {
   const TikTokPageScrollPhysics({super.parent});
 
   static const double _minPageFlingVelocity = 35;
-  static const double _pageCommitThreshold = 0.16;
+  static const double _pageCommitThreshold = 0.08;
   static const SpringDescription _spring = SpringDescription(
-    mass: 0.45,
-    stiffness: 430,
-    damping: 34,
+    mass: 0.2,
+    stiffness: 1000,
+    damping: 40,
   );
 
   @override
@@ -17,16 +17,19 @@ class TikTokPageScrollPhysics extends ScrollPhysics {
   }
 
   @override
-  double get minFlingDistance => 3;
+  double get minFlingDistance => 2;
 
   @override
   double get minFlingVelocity => _minPageFlingVelocity;
 
   @override
-  double get maxFlingVelocity => 12000;
+  double get maxFlingVelocity => 20000;
 
   @override
-  double? get dragStartDistanceMotionThreshold => 2;
+  double? get dragStartDistanceMotionThreshold => 1;
+
+  @override
+  SpringDescription get spring => _spring;
 
   @override
   Simulation? createBallisticSimulation(
@@ -43,21 +46,19 @@ class TikTokPageScrollPhysics extends ScrollPhysics {
       return super.createBallisticSimulation(position, velocity);
     }
 
-    final page = position.pixels / viewportDimension;
-    final basePage = page.floor();
-    final pageDelta = page - basePage;
-    final int targetPage;
+    final currentPage = position.pixels / viewportDimension;
+    final basePage = currentPage.floor();
+    final pageDelta = currentPage - basePage;
 
+    final int targetPage;
     if (velocity > _minPageFlingVelocity) {
       targetPage = basePage + 1;
     } else if (velocity < -_minPageFlingVelocity) {
       targetPage = basePage;
-    } else if (pageDelta <= _pageCommitThreshold) {
-      targetPage = basePage;
-    } else if (pageDelta >= 1 - _pageCommitThreshold) {
+    } else if (pageDelta >= _pageCommitThreshold) {
       targetPage = basePage + 1;
     } else {
-      targetPage = page.round();
+      targetPage = basePage;
     }
 
     final targetPixels = (targetPage * viewportDimension).clamp(
@@ -71,7 +72,7 @@ class TikTokPageScrollPhysics extends ScrollPhysics {
     }
 
     return ScrollSpringSimulation(
-      _spring,
+      spring,
       position.pixels,
       targetPixels,
       velocity,

@@ -9,7 +9,7 @@ class VideoFeedBloc extends Bloc<VideoFeedEvent, VideoFeedState> {
   final SearchVideosUseCase searchVideosUseCase;
 
   static const int _perPage = 20;
-  static const int _loadMoreThreshold = 6;
+  static const int _loadMoreThreshold = 8;
 
   VideoFeedBloc({
     required this.getPopularVideosUseCase,
