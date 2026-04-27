@@ -21,8 +21,9 @@ class VideoFeedPage extends StatefulWidget {
   /// Video playback is paused when the feed is hidden so audio does not keep
   /// playing behind other screens.
   final bool isActive;
+  final VideoFeedPageController? controller;
 
-  const VideoFeedPage({super.key, this.isActive = true});
+  const VideoFeedPage({super.key, this.isActive = true, this.controller});
 
   @override
   State<VideoFeedPage> createState() => _VideoFeedPageState();
@@ -55,6 +56,7 @@ class _VideoFeedPageState extends State<VideoFeedPage>
 
   /// Monotonic token used to cancel stale async prepare/play work.
   int _videoWindowRequest = 0;
+  Future<void>? _mediaShutdownFuture;
 
   /// Forces the first loaded video, and refreshed replacement feeds, to start.
   bool _hasStartedInitialVideo = false;
@@ -89,6 +91,7 @@ class _VideoFeedPageState extends State<VideoFeedPage>
   @override
   void initState() {
     super.initState();
+    widget.controller?._attach(this);
     videoPlayerManager = VideoPlayerManager(
       videoCacheService: sl<VideoCacheService>(),
     );
@@ -102,12 +105,12 @@ class _VideoFeedPageState extends State<VideoFeedPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.controller?._detach(this);
     _videoSyncDebouncer.dispose();
     _disposeDebouncer.dispose();
     _activeIndexNotifier.dispose();
     _pageController.dispose();
-    videoPlayerManager.cancelAllCachedVideoDownloads();
-    videoPlayerManager.disposeAll();
+    unawaited(shutdownMedia());
     videoPlayerManager.dispose();
     super.dispose();
   }
@@ -115,6 +118,10 @@ class _VideoFeedPageState extends State<VideoFeedPage>
   @override
   void didUpdateWidget(covariant VideoFeedPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller?._detach(this);
+      widget.controller?._attach(this);
+    }
     if (oldWidget.isActive == widget.isActive) return;
 
     if (widget.isActive) {
@@ -122,6 +129,20 @@ class _VideoFeedPageState extends State<VideoFeedPage>
     } else {
       _pauseCurrentVideo();
     }
+  }
+
+  Future<void> shutdownMedia() {
+    return _mediaShutdownFuture ??= _shutdownMedia();
+  }
+
+  Future<void> _shutdownMedia() async {
+    _videoWindowRequest++;
+    _pendingVideoSync = null;
+    _pendingPreloadWindow = null;
+    _videoSyncDebouncer.cancel();
+    _disposeDebouncer.cancel();
+    videoPlayerManager.cancelAllCachedVideoDownloads();
+    await videoPlayerManager.disposeAll();
   }
 
   @override
@@ -640,4 +661,22 @@ class _PreloadWindowRequest {
   final List<VideoEntity> videos;
 
   const _PreloadWindowRequest({required this.index, required this.videos});
+}
+
+class VideoFeedPageController {
+  _VideoFeedPageState? _state;
+
+  Future<void> shutdown() {
+    return _state?.shutdownMedia() ?? Future<void>.value();
+  }
+
+  void _attach(_VideoFeedPageState state) {
+    _state = state;
+  }
+
+  void _detach(_VideoFeedPageState state) {
+    if (identical(_state, state)) {
+      _state = null;
+    }
+  }
 }

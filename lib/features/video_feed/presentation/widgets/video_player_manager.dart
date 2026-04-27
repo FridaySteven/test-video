@@ -22,6 +22,7 @@ class VideoPlayerManager extends ChangeNotifier {
   int? _activeVideoId;
   bool _isUserPaused = false;
   bool _isDisposed = false;
+  Future<void>? _disposeAllFuture;
   int _playRequestId = 0;
   static const bool _logVideoLifecycle = false;
 
@@ -65,6 +66,8 @@ class VideoPlayerManager extends ChangeNotifier {
   }
 
   Future<void> prepare(VideoEntity video) async {
+    if (_isDisposed || _disposeAllFuture != null) return;
+
     final preparing = _preparing[video.id];
     if (preparing != null) {
       await preparing;
@@ -122,6 +125,8 @@ class VideoPlayerManager extends ChangeNotifier {
   }
 
   Future<void> play(int videoId) async {
+    if (_isDisposed || _disposeAllFuture != null) return;
+
     _playRequestId++;
     final player = _players[videoId];
     if (player == null) return;
@@ -140,6 +145,8 @@ class VideoPlayerManager extends ChangeNotifier {
   }
 
   Future<void> playOnly(int videoId, {bool force = false}) async {
+    if (_isDisposed || _disposeAllFuture != null) return;
+
     final requestId = ++_playRequestId;
     _activeVideoId = videoId;
 
@@ -171,6 +178,8 @@ class VideoPlayerManager extends ChangeNotifier {
   }
 
   Future<void> pause(int videoId) async {
+    if (_isDisposed || _disposeAllFuture != null) return;
+
     _playRequestId++;
     final player = _players[videoId];
     if (player == null) return;
@@ -191,6 +200,8 @@ class VideoPlayerManager extends ChangeNotifier {
   }
 
   Future<void> togglePlayPause(int videoId) async {
+    if (_isDisposed || _disposeAllFuture != null) return;
+
     _playRequestId++;
     final player = _players[videoId];
     if (player == null) return;
@@ -215,6 +226,8 @@ class VideoPlayerManager extends ChangeNotifier {
   }
 
   Future<void> disposeVideo(int videoId) async {
+    if (_disposeAllFuture != null) return;
+
     final preparing = _preparing[videoId];
     if (preparing != null) {
       _disposingVideoIds.add(videoId);
@@ -283,6 +296,16 @@ class VideoPlayerManager extends ChangeNotifier {
   }
 
   Future<void> disposeAll() async {
+    final activeDispose = _disposeAllFuture;
+    if (activeDispose != null) return activeDispose;
+
+    final future = _disposeAll();
+    _disposeAllFuture = future;
+    return future;
+  }
+
+  Future<void> _disposeAll() async {
+    _playRequestId++;
     _disposingVideoIds.addAll(_players.keys);
     await Future.wait(
       _preparing.values.map(
@@ -290,8 +313,15 @@ class VideoPlayerManager extends ChangeNotifier {
       ),
     );
 
-    for (final player in _players.values) {
-      await player.dispose();
+    final players = List<Player>.of(_players.values);
+    for (final player in players) {
+      try {
+        await player.dispose();
+      } catch (error, stackTrace) {
+        if (kDebugMode && _logVideoLifecycle) {
+          talker.warning('Player dispose failed', error, stackTrace);
+        }
+      }
     }
 
     _players.clear();
