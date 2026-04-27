@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:test_video/features/video_feed/presentation/widgets/tiktok_loading_indicator.dart';
 import '../../domain/entities/video_entity.dart';
 import 'video_player_manager.dart';
 
@@ -46,6 +47,8 @@ class _VideoSnapshot {
   final VideoController? controller;
   final Player? player;
   final bool isReady;
+  final bool isPlaying;
+  final bool hasFirstFrameRendered;
   final String? error;
   final bool showPauseOverlay;
 
@@ -53,6 +56,8 @@ class _VideoSnapshot {
     required this.controller,
     required this.player,
     required this.isReady,
+    required this.isPlaying,
+    required this.hasFirstFrameRendered,
     required this.error,
     required this.showPauseOverlay,
   });
@@ -62,6 +67,8 @@ class _VideoSnapshot {
       controller: manager.getController(videoId),
       player: manager.getPlayer(videoId),
       isReady: manager.isReady(videoId),
+      isPlaying: manager.isPlaying(videoId),
+      hasFirstFrameRendered: manager.hasFirstFrameRendered(videoId),
       error: manager.getError(videoId),
       showPauseOverlay: manager.shouldShowPauseOverlay(videoId),
     );
@@ -73,13 +80,22 @@ class _VideoSnapshot {
         other.controller == controller &&
         other.player == player &&
         other.isReady == isReady &&
+        other.isPlaying == isPlaying &&
+        other.hasFirstFrameRendered == hasFirstFrameRendered &&
         other.error == error &&
         other.showPauseOverlay == showPauseOverlay;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(controller, player, isReady, error, showPauseOverlay);
+  int get hashCode => Object.hash(
+    controller,
+    player,
+    isReady,
+    isPlaying,
+    hasFirstFrameRendered,
+    error,
+    showPauseOverlay,
+  );
 }
 
 class _VideoSurface extends StatefulWidget {
@@ -94,6 +110,8 @@ class _VideoSurface extends StatefulWidget {
 
 class _VideoSurfaceState extends State<_VideoSurface> {
   late _VideoSnapshot _snapshot;
+  VideoController? _watchedFirstFrameController;
+  static const Duration _firstFrameFallbackDelay = Duration(seconds: 2);
 
   @override
   void initState() {
@@ -130,15 +148,40 @@ class _VideoSurfaceState extends State<_VideoSurface> {
     });
   }
 
+  void _watchFirstFrame(VideoController controller) {
+    if (_watchedFirstFrameController == controller) return;
+    _watchedFirstFrameController = controller;
+
+    unawaited(
+      () async {
+        try {
+          await controller.waitUntilFirstFrameRendered.timeout(
+            _firstFrameFallbackDelay,
+          );
+        } on TimeoutException {
+          // media_kit can miss this signal during rapid attach/detach cycles.
+        }
+
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) return;
+        if (_snapshot.controller != controller || !_snapshot.isReady) return;
+        widget.manager.markFirstFrameRendered(widget.video.id);
+      }().catchError((Object error, StackTrace stackTrace) {}),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _snapshot.controller;
+    final canRenderVideo = controller != null && _snapshot.isReady;
+    if (canRenderVideo) {
+      _watchFirstFrame(controller);
+    }
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        Image.network(widget.video.thumbnailUrl, fit: BoxFit.cover),
-        if (controller != null && _snapshot.isReady)
+        if (canRenderVideo)
           Positioned.fill(
             child: RepaintBoundary(
               child: Video(
@@ -148,6 +191,20 @@ class _VideoSurfaceState extends State<_VideoSurface> {
               ),
             ),
           ),
+        // Positioned.fill(
+        //   child: IgnorePointer(
+        //     child: AnimatedOpacity(
+        //       opacity: canShowVideo ? 0 : 1,
+        //       duration: const Duration(milliseconds: 800),
+        //       curve: Curves.easeOutCubic,
+        //       child: Image.network(
+        //         widget.video.thumbnailUrl,
+        //         fit: BoxFit.cover,
+        //         filterQuality: FilterQuality.low,
+        //       ),
+        //     ),
+        //   ),
+        // ),
       ],
     );
   }
@@ -229,12 +286,14 @@ class _ActiveVideoControlsState extends State<_ActiveVideoControls> {
     final player = _snapshot.player;
     final error = _snapshot.error;
     final isReady = _snapshot.isReady;
+    final hasFirstFrameRendered = _snapshot.hasFirstFrameRendered;
+    final canInteract = isReady && hasFirstFrameRendered && player != null;
 
     return RepaintBoundary(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (isReady && player != null)
+          if (canInteract)
             Positioned.fill(
               bottom: 48,
               child: GestureDetector(
@@ -249,17 +308,18 @@ class _ActiveVideoControlsState extends State<_ActiveVideoControls> {
               ),
             ),
           if (error != null) _VideoErrorMessage(error: error),
-          if (!isReady && error == null)
-            const Center(child: CircularProgressIndicator(color: Colors.white)),
-          if (isReady && player != null)
+          if ((isReady && !hasFirstFrameRendered) && error == null)
+            const Center(child: TikTokLoadingIndicator()),
+          if (canInteract) ...[
             _PauseIndicator(visible: _snapshot.showPauseOverlay),
-          if (isReady && player != null)
+
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
               child: _VideoProgressBar(player: player),
             ),
+          ],
         ],
       ),
     );
